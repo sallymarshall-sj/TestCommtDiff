@@ -34,6 +34,12 @@ const extractTicketsFromCommits = commits => {
 const getUniqueTicketsBetweenBranches = (targetBranch, sourceBranch, repositoryPath) => {
     execSync(`git -C ${repositoryPath} fetch`);
     const cherryPickedCommits = execSync(`git -C ${repositoryPath} log --cherry-pick --oneline origin/${targetBranch} ^origin/${sourceBranch}`)
+        // --cherry-pick filters out semantically same commits
+        // if we run all commits (below), it pulls in all changes
+        // cherryPickedCommits finds all commits, if they have the same message. There exists a whole bunch of duplicate stuff from old cherry picks that have different commit IDs but same code. 
+        // We should get these so we can ignore them
+
+
         // get all commits that are in target branch, but not source branch. What does cherry pick do?
         // cherry pick is used to grab individual commits from dev branch (which contains all up to date code)
         .toString()
@@ -48,7 +54,10 @@ const getUniqueTicketsBetweenBranches = (targetBranch, sourceBranch, repositoryP
     const allTickets = extractTicketsFromCommits(allCommits); // get all tickets
     const cherryPickedTickets = extractTicketsFromCommits(cherryPickedCommits); // get cherry picked tickets (figure out what these are)
     const newTickets = _.difference(allTickets, cherryPickedTickets); // find any new tickets that did not exist before. What happens to badly tagged commits here?
-    // ie its valid as per the Regex starts with, but the number is made up or invalid or matches an old ticket? Do we care? Does this ever happen
+    // All new commits, excluding dup old cherry pick weird commits
+
+
+    // ie its valid as per the Regex starts with, but the number is made up or invalid or matches an old ticket? Do we care? Does this ever happen. ==> we don't care
     const validTickets = newTickets.filter(ticket => ticketPatterns.some(pattern => ticket.startsWith(pattern)));
     return validTickets.sort();
 };
@@ -88,30 +97,32 @@ const getAllCommits = () => {
     if (!targetBranch || !sourceBranch || !responseType) {
         console.error(
             `Please provide all the params of this script. Missing ${compact([
-                !targetBranch && '--targetBranch',
-                !sourceBranch && '--sourceBranch',
+                // on develop 
+                !targetBranch && '--targetBranch', // newer changes --> develop (because the new release should mirror develop on creation)
+                !sourceBranch && '--sourceBranch', // old changes --> will normally be the previous release
                 !responseType && '--responseType'
             ]).join(', ')}`
         );
         process.exit(1);
     }
 
-    console.log(`-> ${color.fgBlue}Fetching commits of worker app${color.reset}`);
+    console.log(`-> ${color.fgBlue}Fetching commits of worker app${color.reset}`); // REPO 1
     const appTickets = getUniqueTicketsBetweenBranches(targetBranch, sourceBranch, './');
 
     console.log(`-> ${color.fgBlue}Fetching commits of partner resources${color.reset}`);
-    const partnerResourcesSourceBranch = sourceBranch !== 'develop' ? sourceBranch : 'worker/merged'; // what is the partner resource branch ?? 
+    const partnerResourcesSourceBranch = sourceBranch !== 'develop' ? sourceBranch : 'worker/merged'; // what is the partner resource branch ??  // REPO 2
     const resourceTickets = getUniqueTicketsBetweenBranches(targetBranch, partnerResourcesSourceBranch, '../frontend-partner-resources');
 
     console.log(`-> ${color.fgBlue}Fetching commits of environment configurations${color.reset}\n`);
-    const envConfigsSourceBranch = sourceBranch !== 'develop' ? sourceBranch : 'worker/merged'; // why do we need configurations seperately, what is in this 
+    const envConfigsSourceBranch = sourceBranch !== 'develop' ? sourceBranch : 'worker/merged'; // why do we need configurations seperately, what is in this  // REPO 3
     const configTickets = getUniqueTicketsBetweenBranches(targetBranch, envConfigsSourceBranch, '../frontend-environment-configurations');
+    
     const totalTickets = _.uniqWith([...appTickets, ...resourceTickets, ...configTickets], _.isEqual);
 
     if (responseType === 'list') {
         execSync(`echo ${totalTickets.join(' ')} | pbcopy`); //
     } else {
-        const joiner = '%2C%20'; // why?
+        const joiner = '%2C%20'; // comma + space
         const url = `https://swipejobs.atlassian.net/issues/?jql=issueKey%20in%20(${totalTickets.join(joiner)})`;
         const quotedUrl =`"${url}"`;
         execSync(`echo ${quotedUrl} | pbcopy`); // does pbcopy just put in clipboard so you run this script then head to jira and paste
@@ -124,3 +135,6 @@ const getAllCommits = () => {
 getAllCommits();
 
 // Updates to a ticket that has already been tagged and included in release, but maybe not updated version
+
+
+// why can't the release planner just mock whatever the CLI is doing when we run this script?
